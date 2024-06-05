@@ -31,7 +31,6 @@ import {
   LabelElement,
   UISchemaElement,
 } from '../models';
-import find from 'lodash/find';
 import {
   getUISchemas,
   getAjv,
@@ -53,13 +52,13 @@ import type {
 } from '../reducers';
 import type { RankedTester } from '../testers';
 import { hasShowRule, isInherentlyEnabled, isVisible } from './runtime';
-import { createLabelDescriptionFrom } from './label';
+import { computeChildLabel, createLabelDescriptionFrom } from './label';
 import type { CombinatorKeyword } from './combinators';
 import { moveDown, moveUp } from './array';
 import type { AnyAction, Dispatch } from './type';
 import { Resolve, convertDateToString, hasType } from './util';
 import { composePaths, composeWithUi } from './path';
-import { CoreActions, update } from '../actions';
+import { CoreActions, update, UpdateArrayContext } from '../actions';
 import type { ErrorObject } from 'ajv';
 import type { JsonFormsState } from '../store';
 import {
@@ -689,20 +688,17 @@ export const mapStateToMasterListItemProps = (
   state: JsonFormsState,
   ownProps: OwnPropsOfMasterListItem
 ): StatePropsOfMasterItem => {
-  const { schema, path, index } = ownProps;
-  const firstPrimitiveProp = schema.properties
-    ? find(Object.keys(schema.properties), (propName) => {
-        const prop = schema.properties[propName];
-        return (
-          prop.type === 'string' ||
-          prop.type === 'number' ||
-          prop.type === 'integer'
-        );
-      })
-    : undefined;
+  const { schema, path, uischema, childLabelProp, index } = ownProps;
   const childPath = composePaths(path, `${index}`);
-  const childData = Resolve.data(getData(state), childPath);
-  const childLabel = firstPrimitiveProp ? childData[firstPrimitiveProp] : '';
+  const childLabel = computeChildLabel(
+    getData(state),
+    childPath,
+    childLabelProp,
+    schema,
+    getSchema(state),
+    state.jsonforms.i18n.translate,
+    uischema
+  );
 
   return {
     ...ownProps,
@@ -725,6 +721,8 @@ export interface OwnPropsOfMasterListItem {
   path: string;
   enabled: boolean;
   schema: JsonSchema;
+  uischema: UISchemaElement;
+  childLabelProp?: string;
   handleSelect(index: number): () => void;
   removeItem(path: string, value: number): () => void;
   translations: ArrayTranslations;
@@ -823,41 +821,63 @@ export const mapDispatchToArrayControlProps = (
 ): DispatchPropsOfArrayControl => ({
   addItem: (path: string, value: any) => () => {
     dispatch(
-      update(path, (array) => {
-        if (array === undefined || array === null) {
-          return [value];
-        }
+      update(
+        path,
+        (array) => {
+          if (array === undefined || array === null) {
+            return [value];
+          }
 
-        array.push(value);
-        return array;
-      })
+          array.push(value);
+          return array;
+        },
+        { type: 'ADD', values: [value] } as UpdateArrayContext
+      )
     );
   },
   removeItems: (path: string, toDelete: number[]) => () => {
     dispatch(
-      update(path, (array) => {
-        toDelete
-          .sort((a, b) => a - b)
-          .reverse()
-          .forEach((s) => array.splice(s, 1));
-        return array;
-      })
+      update(
+        path,
+        (array) => {
+          toDelete
+            .sort((a, b) => a - b)
+            .reverse()
+            .forEach((s) => array.splice(s, 1));
+          return array;
+        },
+        { type: 'REMOVE', indices: toDelete } as UpdateArrayContext
+      )
     );
   },
   moveUp: (path, toMove: number) => () => {
     dispatch(
-      update(path, (array) => {
-        moveUp(array, toMove);
-        return array;
-      })
+      update(
+        path,
+        (array) => {
+          moveUp(array, toMove);
+          return array;
+        },
+        {
+          type: 'MOVE',
+          moves: [{ from: toMove, to: toMove - 1 }],
+        } as UpdateArrayContext
+      )
     );
   },
   moveDown: (path, toMove: number) => () => {
     dispatch(
-      update(path, (array) => {
-        moveDown(array, toMove);
-        return array;
-      })
+      update(
+        path,
+        (array) => {
+          moveDown(array, toMove);
+          return array;
+        },
+        {
+          type: 'MOVE',
+          moves: [{ from: toMove, to: toMove + 1 }],
+        } as UpdateArrayContext
+      )
     );
   },
 });
